@@ -1,0 +1,101 @@
+version: "3.8"
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: trust-score-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: trust_score
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - trust-score-network
+
+  # Trust Score API Service
+  api:
+    build:
+      context: .
+      target: api
+    container_name: trust-score-api
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app
+      - LOG_LEVEL=INFO
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/trust_score
+    volumes:
+      # Mount for development (hot reload)
+      - ./src:/app/src:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - trust-score-network
+
+  # Cron Job Service for scheduled tasks
+  cronjob:
+    build:
+      context: .
+      target: cronjob
+    container_name: trust-score-cronjob
+    environment:
+      - PYTHONPATH=/app
+      - LOG_LEVEL=INFO
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/trust_score
+    volumes:
+      - ./src:/app/src:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - trust-score-network
+
+  # Development service with hot reload
+  dev:
+    build:
+      context: .
+      target: dev
+    container_name: trust-score-dev
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app
+      - LOG_LEVEL=DEBUG
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/trust_score
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - dev
+    networks:
+      - trust-score-network
+
+networks:
+  trust-score-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+
